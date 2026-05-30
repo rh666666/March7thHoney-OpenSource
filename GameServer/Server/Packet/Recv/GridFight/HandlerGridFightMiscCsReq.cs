@@ -186,6 +186,8 @@ public class HandlerGridFightUseConsumableCsReq : Handler
 
         var itemId = req.ItemId;
         if (!GameData.GridFightConsumablesData.TryGetValue(itemId, out var consumable)) return;
+        if (consumable.IfConsume && inst.Consumables.All(c => c.ItemId != itemId || c.Num == 0))
+            return;
 
         var sync = new GridFightSyncUpdateResultScNotify();
         var sec = new GridFightSyncResultData { GridUpdateSrc = GridFightUpdateSrcType.LnpfefkjdhpNefkflkampo };
@@ -195,6 +197,17 @@ public class HandlerGridFightUseConsumableCsReq : Handler
         
         
         
+        var target = req.DisplayValue;
+        var ruleApplied = consumable.ConsumableRule switch
+        {
+            Enums.GridFight.GridFightConsumeTypeEnum.Remove => ApplyRemoveRule(inst, target, sec),
+            Enums.GridFight.GridFightConsumeTypeEnum.Roll => ApplyRollRule(inst, target, sec),
+            Enums.GridFight.GridFightConsumeTypeEnum.Upgrade => ApplyUpgradeRule(inst, target, sec),
+            _ => false
+        };
+        if (!ruleApplied)
+            return;
+
         if (consumable.IfConsume)
         {
             var current = inst.Consumables.FirstOrDefault(c => c.ItemId == itemId);
@@ -212,73 +225,106 @@ public class HandlerGridFightUseConsumableCsReq : Handler
             sec.UpdateDynamicList.Add(remaining > 0
                 ? new GridFightSyncData { UpdateGameItemInfo = payload }
                 : new GridFightSyncData { RemoveGameItemInfo = payload });
+            inst.TryConsumeConsumable(itemId);
         }
-
-        var target = req.DisplayValue;
-        switch (consumable.ConsumableRule)
-        {
-            case Enums.GridFight.GridFightConsumeTypeEnum.Remove:
-                HandleRemoveRule(inst, target, sec);
-                break;
-            case Enums.GridFight.GridFightConsumeTypeEnum.Roll:
-                HandleRollRule(inst, target, sec);
-                break;
-            default:
-                
-                break;
-        }
-
-        if (consumable.IfConsume) inst.TryConsumeConsumable(itemId);
 
         sync.SyncResultDataList.Add(sec);
         sync.SyncResultDataList.Add(new GridFightSyncResultData());
         await connection.SendPacket(new PacketGridFightSyncUpdateResultScNotify(sync));
     }
 
-    
-    private static void HandleRemoveRule(GridFightInstance inst, GridFightConsumableTargetInfo target, GridFightSyncResultData sec)
+    /// <summary>
+    /// 拆卸类消耗品：卸下目标角色全部装备。
+    /// </summary>
+    private static bool ApplyRemoveRule(GridFightInstance inst, GridFightConsumableTargetInfo target, GridFightSyncResultData sec)
     {
-        if (target?.RemoveTypeTargetInfo == null) return;
+        if (target?.RemoveTypeTargetInfo == null) return false;
         var roleUid = target.RemoveTypeTargetInfo.DressRoleUniqueId;
-        if (!inst.RoleByUniqueId.TryGetValue(roleUid, out var roleId)) return;
+        if (!inst.RoleByUniqueId.TryGetValue(roleUid, out var roleId)) return false;
         inst.UnequipAllFromRole(roleUid);
         sec.UpdateDynamicList.Add(new GridFightSyncData { UpdateRoleInfo = BuildRoleInfoSnapshot(inst, roleUid, roleId) });
+        return true;
     }
 
-    
-    private static void HandleRollRule(GridFightInstance inst, GridFightConsumableTargetInfo target, GridFightSyncResultData sec)
+    /// <summary>
+    /// 重铸类消耗品：随机替换装备或角色全身装备。
+    /// </summary>
+    private static bool ApplyRollRule(GridFightInstance inst, GridFightConsumableTargetInfo target, GridFightSyncResultData sec)
     {
-        if (target?.RollTypeTargetInfo == null) return;
+        if (target?.RollTypeTargetInfo == null) return false;
         var equipUid = target.RollTypeTargetInfo.DressEquipmentUniqueId;
         var roleUid = target.RollTypeTargetInfo.DressRoleUniqueId;
 
         if (equipUid != 0)
-        {
-            RollOneEquipment(inst, equipUid, sec);
-            return;
-        }
+            return RollOneEquipment(inst, equipUid, sec);
 
-        if (roleUid != 0 && inst.RoleByUniqueId.TryGetValue(roleUid, out var roleId))
-        {
-            
-            var equips = inst.EquipUniqueIdsByRoleUniqueId.TryGetValue(roleUid, out var list)
-                ? list.ToList()
-                : new List<uint>();
-            foreach (var uid in equips)
-                RollOneEquipment(inst, uid, sec);
-            sec.UpdateDynamicList.Add(new GridFightSyncData { UpdateRoleInfo = BuildRoleInfoSnapshot(inst, roleUid, roleId) });
-        }
+        if (roleUid == 0 || !inst.RoleByUniqueId.TryGetValue(roleUid, out var roleId))
+            return false;
+
+        var equips = inst.EquipUniqueIdsByRoleUniqueId.TryGetValue(roleUid, out var list)
+            ? list.ToList()
+            : new List<uint>();
+        if (equips.Count == 0) return false;
+
+        var rolledAny = false;
+        foreach (var uid in equips)
+            rolledAny |= RollOneEquipment(inst, uid, sec);
+        if (!rolledAny) return false;
+
+        sec.UpdateDynamicList.Add(new GridFightSyncData { UpdateRoleInfo = BuildRoleInfoSnapshot(inst, roleUid, roleId) });
+        return true;
     }
 
-    private static void RollOneEquipment(GridFightInstance inst, uint equipUid, GridFightSyncResultData sec)
+    /// <summary>
+    /// 升级类消耗品（如特权赋予卡 350104）：将 3503**** 成品装备升级为 3504****。
+    /// </summary>
+    private static bool ApplyUpgradeRule(GridFightInstance inst, GridFightConsumableTargetInfo target, GridFightSyncResultData sec)
+    {
+        if (target?.UpgradeTypeTargetInfo == null) return false;
+        var equipUid = target.UpgradeTypeTargetInfo.DressEquipmentUniqueId;
+        if (equipUid == 0) return false;
+
+        var old = inst.FindEquipment(equipUid);
+        if (old == null) return false;
+
+        uint? wearer = null;
+        var roleId = 0u;
+        foreach (var (roleUid, equipList) in inst.EquipUniqueIdsByRoleUniqueId)
+        {
+            if (!equipList.Contains(equipUid)) continue;
+            wearer = roleUid;
+            inst.RoleByUniqueId.TryGetValue(roleUid, out roleId);
+            break;
+        }
+
+        var oldClone = old.Clone();
+        var upgraded = inst.UpgradeCraftableEquipment(equipUid);
+        if (upgraded == null) return false;
+
+        var removeItem = new GridFightGameItemSyncInfo();
+        removeItem.GridFightEquipmentList.Add(oldClone);
+        sec.UpdateDynamicList.Add(new GridFightSyncData { RemoveGameItemInfo = removeItem });
+
+        var addItem = new GridFightGameItemSyncInfo();
+        addItem.GridFightEquipmentList.Add(upgraded);
+        sec.UpdateDynamicList.Add(new GridFightSyncData { AddGameItemInfo = addItem });
+
+        if (wearer.HasValue && roleId != 0)
+            sec.UpdateDynamicList.Add(new GridFightSyncData { UpdateRoleInfo = BuildRoleInfoSnapshot(inst, wearer.Value, roleId) });
+
+        GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
+        return true;
+    }
+
+    private static bool RollOneEquipment(GridFightInstance inst, uint equipUid, GridFightSyncResultData sec)
     {
         var old = inst.FindEquipment(equipUid);
-        if (old == null) return;
+        if (old == null) return false;
         var newId = GridFightInstance.RollSameCategoryEquipment(old.GridFightEquipmentId);
-        if (newId == 0) return;
+        if (newId == 0) return false;
         var oldClone = old.Clone();
         var added = inst.RollEquipment(equipUid, newId, source: 1);
-        if (added == null) return;
+        if (added == null) return false;
 
         var removeItem = new GridFightGameItemSyncInfo();
         removeItem.GridFightEquipmentList.Add(oldClone);
@@ -288,6 +334,7 @@ public class HandlerGridFightUseConsumableCsReq : Handler
         addItem.GridFightEquipmentList.Add(added);
         sec.UpdateDynamicList.Add(new GridFightSyncData { AddGameItemInfo = addItem });
         GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
+        return true;
     }
 
     private static GridGameRoleInfo BuildRoleInfoSnapshot(GridFightInstance inst, uint roleUid, uint roleId)

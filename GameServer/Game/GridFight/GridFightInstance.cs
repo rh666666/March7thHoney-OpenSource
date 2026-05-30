@@ -400,6 +400,24 @@ public class GridFightInstance(PlayerInstance player, uint season, uint division
         return added;
     }
 
+    /// <summary>
+    /// 将 3503**** 成品装备（Craftable）升级为 3504****（Radiant）；保留穿戴角色与 source。
+    /// </summary>
+    public GridFightEquipmentInfo? UpgradeCraftableEquipment(uint equipUniqueId)
+    {
+        var old = FindEquipment(equipUniqueId);
+        if (old == null) return null;
+        if (!GameData.GridFightEquipUpgradeData.TryGetValue(old.GridFightEquipmentId, out var upgradeExcel))
+            return null;
+        if (!GameData.GridFightEquipmentData.TryGetValue(old.GridFightEquipmentId, out var oldExcel)
+            || oldExcel.EquipCategory != GridFightEquipCategoryEnum.Craftable)
+            return null;
+        if (!GameData.GridFightEquipmentData.ContainsKey(upgradeExcel.UpgradeID))
+            return null;
+
+        return RollEquipment(equipUniqueId, upgradeExcel.UpgradeID, old.Source);
+    }
+
     public bool TryConsumeConsumable(uint itemId, int amount = 1)
     {
         for (var i = 0; i < amount; i++)
