@@ -65,11 +65,13 @@ public class HandlerGridFightEquipDressCsReq : Handler
             var addItem = new GridFightGameItemSyncInfo();
             addItem.GridFightEquipmentList.Add(craftedAdvancedEquip.Added);
             craftSec.UpdateDynamicList.Add(new GridFightSyncData { AddGameItemInfo = addItem });
+            GridFightInstance.AppendBattlefieldLayoutSync(craftSec, inst);
             sync.SyncResultDataList.Add(craftSec);
         }
 
         var sec = new GridFightSyncResultData();
         sec.UpdateDynamicList.Add(new GridFightSyncData { UpdateRoleInfo = roleInfo });
+        GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
         sync.SyncResultDataList.Add(sec);
         await connection.SendPacket(new PacketGridFightSyncUpdateResultScNotify(sync));
     }
@@ -162,6 +164,7 @@ public class HandlerGridFightEquipCraftCsReq : Handler
         var addItem = new GridFightGameItemSyncInfo();
         addItem.GridFightEquipmentList.Add(crafted);
         sec.UpdateDynamicList.Add(new GridFightSyncData { AddGameItemInfo = addItem });
+        GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
 
         sync.SyncResultDataList.Add(sec);
         sync.SyncResultDataList.Add(new GridFightSyncResultData());
@@ -284,6 +287,7 @@ public class HandlerGridFightUseConsumableCsReq : Handler
         var addItem = new GridFightGameItemSyncInfo();
         addItem.GridFightEquipmentList.Add(added);
         sec.UpdateDynamicList.Add(new GridFightSyncData { AddGameItemInfo = addItem });
+        GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
     }
 
     private static GridGameRoleInfo BuildRoleInfoSnapshot(GridFightInstance inst, uint roleUid, uint roleId)
@@ -359,6 +363,7 @@ public class HandlerGridFightUseOrbCsReq : Handler
                     UniqueId = r.AddEquipmentUniqueId.Value
                 });
                 sec.UpdateDynamicList.Add(new GridFightSyncData { AddGameItemInfo = item });
+                GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
             }
 
             if (r.AddConsumableItemId.HasValue)
@@ -409,7 +414,11 @@ public class HandlerGridFightUseOrbCsReq : Handler
                 }
             });
             lvlSec.UpdateDynamicList.Add(new GridFightSyncData { GridFightBuyExpCost = inst.GetBuyExpCost() });
-            lvlSec.UpdateDynamicList.Add(new GridFightSyncData { MaxBattleRoleNum = inst.GetCurrentMaxBattleRoleNum() });
+            GridFightInstance.AppendBattlefieldLayoutSync(lvlSec, inst);
+            lvlSec.UpdateDynamicList.Add(new GridFightSyncData
+            {
+                ShopSyncInfo = new GridFightShopSyncInfo { LDEDGOOKHFL = inst.BuildShopRarityDisplayInfo() }
+            });
             sync.SyncResultDataList.Add(lvlSec);
         }
 
