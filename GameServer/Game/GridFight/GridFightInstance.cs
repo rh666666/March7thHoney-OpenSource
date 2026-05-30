@@ -1122,6 +1122,40 @@ public class GridFightInstance(PlayerInstance player, uint season, uint division
     }
 
     /// <summary>
+    /// 投影仪复制角色：生成与目标同角色的 1 星副本，落点规则与购买一致（备战席优先，可升星溢出）。
+    /// </summary>
+    /// <param name="sourceUniqueId">被复制角色的 uniqueId。</param>
+    /// <param name="maxRarity">允许复制的最高费用（350105=3，350106=5）。</param>
+    public (bool ok, uint newUniqueId, uint targetPos, uint sourcePos, Retcode retcode) TryCopyRole(
+        uint sourceUniqueId,
+        uint maxRarity)
+    {
+        if (!RoleByUniqueId.TryGetValue(sourceUniqueId, out var roleKey))
+            return (false, 0, 0, 0, Retcode.RetGridFightParamNotMatch);
+
+        if (!GridFightRoleLookup.TryFind(roleKey, out var roleExcel))
+            return (false, 0, 0, 0, Retcode.RetGridFightParamNotMatch);
+
+        if (maxRarity > 0 && roleExcel.Rarity > maxRarity)
+            return (false, 0, 0, 0, Retcode.RetGridFightParamNotMatch);
+
+        const uint copyStar = 1u;
+        var sourcePos = ResolveRolePos(sourceUniqueId);
+        if (sourcePos == 0)
+            return (false, 0, 0, 0, Retcode.RetGridFightParamNotMatch);
+
+        if (!TryAcquirePurchasePos(roleKey, copyStar, out var targetPos))
+            return (false, 0, 0, sourcePos, Retcode.RetGridFightNoEmptyPos);
+
+        var newUniqueId = AllocRoleUniqueId();
+        RoleByUniqueId[newUniqueId] = roleKey;
+        RoleStarByUniqueId[newUniqueId] = copyStar;
+        UniqueIdByPos[targetPos] = newUniqueId;
+
+        return (true, newUniqueId, targetPos, sourcePos, Retcode.RetSucc);
+    }
+
+    /// <summary>
     /// 购买昔涟专属诗篇等特殊商品：仅绑定至出战席三星昔涟。
     /// </summary>
     private (bool ok, uint addedUniqueId, uint roleId, uint pos, List<GridFightPosInfo> benchMoved, bool duplicateRetry, uint purchasedAugmentId, Retcode retcode) TryBuySpecialGoods(

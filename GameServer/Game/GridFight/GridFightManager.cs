@@ -258,9 +258,9 @@ public class GridFightManager(PlayerInstance player) : BasePlayerManager(player)
     }
 
     /// <summary>
-    /// 构建购买 AddRoleInfo；升星消耗购入卡时仍返回合成前快照，供客户端先看到三张参与卡。
+    /// 构建购买/复制 AddRoleInfo；升星消耗新卡时仍返回合成前快照，供客户端先看到三张参与卡。
     /// </summary>
-    private static GridGameRoleInfo BuildPurchasedRoleAddInfo(
+    public static GridGameRoleInfo BuildPurchasedRoleAddInfo(
         GridFightInstance inst,
         uint roleUniqueId,
         uint pos,
@@ -276,9 +276,9 @@ public class GridFightManager(PlayerInstance player) : BasePlayerManager(player)
     }
 
     /// <summary>
-    /// 构建购买后备战席压缩 sync；升星参与卡改由动画包下发，避免提前写入最终星级。
+    /// 构建购买/复制后备战席压缩 sync；升星参与卡改由动画包下发，避免提前写入最终星级。
     /// </summary>
-    private static GridGameRoleInfo? TryBuildBenchRepositionRoleInfo(
+    public static GridGameRoleInfo? TryBuildBenchRepositionRoleInfo(
         GridFightInstance inst,
         GridFightPosInfo benchPos,
         IEnumerable<GridFightInstance.RoleMergeResult> buyMerges)

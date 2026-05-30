@@ -1,4 +1,6 @@
 using March7thHoney.Data;
+using March7thHoney.Data.Excel;
+using March7thHoney.GameServer.Game.GridFight.Battle;
 using March7thHoney.GameServer.Game.GridFight.Sync;
 using March7thHoney.GameServer.Game.GridFight;
 using March7thHoney.GameServer.Server.Packet.Send.GridFight;
@@ -198,11 +200,13 @@ public class HandlerGridFightUseConsumableCsReq : Handler
         
         
         var target = req.DisplayValue;
+        List<GridFightInstance.RoleMergeResult>? copyMerges = null;
         var ruleApplied = consumable.ConsumableRule switch
         {
             Enums.GridFight.GridFightConsumeTypeEnum.Remove => ApplyRemoveRule(inst, target, sec),
             Enums.GridFight.GridFightConsumeTypeEnum.Roll => ApplyRollRule(inst, target, sec),
             Enums.GridFight.GridFightConsumeTypeEnum.Upgrade => ApplyUpgradeRule(inst, target, sec),
+            Enums.GridFight.GridFightConsumeTypeEnum.Copy => ApplyCopyRule(inst, consumable, target, sec, out copyMerges),
             _ => false
         };
         if (!ruleApplied)
@@ -231,6 +235,15 @@ public class HandlerGridFightUseConsumableCsReq : Handler
         sync.SyncResultDataList.Add(sec);
         sync.SyncResultDataList.Add(new GridFightSyncResultData());
         await connection.SendPacket(new PacketGridFightSyncUpdateResultScNotify(sync));
+
+        if (copyMerges is { Count: > 0 })
+        {
+            await GridFightMergeSyncHelper.SendMergeSyncsAsync(
+                connection,
+                player,
+                copyMerges,
+                GridFightUpdateSrcType.LnpfefkjdhpNefkflkampo);
+        }
     }
 
     /// <summary>
@@ -311,6 +324,63 @@ public class HandlerGridFightUseConsumableCsReq : Handler
 
         if (wearer.HasValue && roleId != 0)
             sec.UpdateDynamicList.Add(new GridFightSyncData { UpdateRoleInfo = BuildRoleInfoSnapshot(inst, wearer.Value, roleId) });
+
+        GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
+        return true;
+    }
+
+    /// <summary>
+    /// 投影仪类消耗品（350105/350106）：复制 1 星形态至购买落点；刷新源槽位，避免客户端覆盖原角色。
+    /// </summary>
+    private static bool ApplyCopyRule(
+        GridFightInstance inst,
+        GridFightConsumablesExcel consumable,
+        GridFightConsumableTargetInfo target,
+        GridFightSyncResultData sec,
+        out List<GridFightInstance.RoleMergeResult> merges)
+    {
+        merges = [];
+        if (target?.CopyTypeTargetInfo == null) return false;
+
+        var sourceUid = target.CopyTypeTargetInfo.DressRoleUniqueId;
+        if (sourceUid == 0) return false;
+
+        var maxRarity = consumable.ConsumableParamList.Count > 0 ? consumable.ConsumableParamList[0] : 5u;
+        var (ok, newUid, targetPos, sourcePos, _) = inst.TryCopyRole(sourceUid, maxRarity);
+        if (!ok || newUid == 0) return false;
+
+        sec.SyncEffectParamList.Add(sourcePos);
+        sec.SyncEffectParamList.Add(targetPos);
+
+        var copyCtx = new CMCJNKPKBEM();
+        copyCtx.CFNPGNMPNDN[sourceUid.ToString()] = sourcePos;
+        copyCtx.CFNPGNMPNDN[newUid.ToString()] = targetPos;
+        sec.UpdateDynamicList.Add(new GridFightSyncData { CFNPGNMPNDN = copyCtx });
+
+        var addInfo = inst.BuildGridGameRoleInfo(newUid, targetPos);
+        addInfo.RoleStar = 1;
+        sec.UpdateDynamicList.Add(new GridFightSyncData { AddRoleInfo = addInfo });
+
+        if (inst.RoleByUniqueId.TryGetValue(sourceUid, out var sourceRoleKey))
+        {
+            sec.UpdateDynamicList.Add(new GridFightSyncData
+            {
+                UpdateRoleInfo = BuildRoleInfoSnapshot(
+                    inst,
+                    sourceUid,
+                    GridFightRoleLookup.ToSyncRoleId(sourceRoleKey))
+            });
+        }
+
+        merges = inst.TryAutoMergeAllRoles();
+        var benchMoved = merges.Count > 0 ? inst.FinalizeBenchAfterMerge() : [];
+
+        foreach (var benchPos in benchMoved)
+        {
+            var roleInfo = GridFightManager.TryBuildBenchRepositionRoleInfo(inst, benchPos, merges);
+            if (roleInfo == null) continue;
+            sec.UpdateDynamicList.Add(new GridFightSyncData { UpdateRoleInfo = roleInfo });
+        }
 
         GridFightInstance.AppendBattlefieldLayoutSync(sec, inst);
         return true;
